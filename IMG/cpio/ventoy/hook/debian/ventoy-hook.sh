@@ -26,6 +26,10 @@ ventoy_get_debian_distro() {
         if $EGREP -q "ID=.*antix|ID=.*mx" /etc/initrd-release; then
             echo 'antix'; return
         fi
+    elif [ -e /etc/initrd_release ]; then
+        if $EGREP -q "ID=.*antix|ID=.*mx" /etc/initrd_release; then
+            echo 'antix'; return
+        fi
     fi
     
     if [ -e /DISTRO_SPECS ]; then
@@ -43,6 +47,10 @@ ventoy_get_debian_distro() {
             fi
         elif $GREP -m1 -q 'Minimal.*Linux.*Live' /init; then
             echo 'mll'; return
+        elif $GREP -m1 -q 'stratodesk.com' /init; then
+            echo 'stratodesk'; return
+        elif $GREP -q "\bPVE\b" /init; then
+            echo 'pve'; return
         fi
     fi
 
@@ -54,6 +62,10 @@ ventoy_get_debian_distro() {
 
     if $GREP -q 'slax/' /proc/cmdline; then
         echo 'slax'; return
+    fi
+    
+    if $GREP -q 'minios/' /proc/cmdline; then
+        echo 'minios'; return
     fi
     
     if $GREP -q 'PVE ' /proc/version; then
@@ -96,6 +108,14 @@ ventoy_get_debian_distro() {
     
     if $GREP -q '/pyabr/' /proc/cmdline; then
         echo 'pyabr'; return
+    fi
+    
+    if [ -e /devuan-logo.txt ]; then
+        echo 'devuan'; return
+    fi
+    
+    if $GREP -q 'truenas' /proc/version; then
+        echo 'truenas'; return
     fi
     
     echo 'default'

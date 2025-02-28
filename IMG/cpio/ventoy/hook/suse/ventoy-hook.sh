@@ -26,6 +26,12 @@ if [ -f $VTOY_PATH/autoinstall ]; then
     fi
 fi
 
+if $GREP -q 'rdinit=/vtoy/vtoy' /proc/cmdline; then    
+    echo "remove rdinit param" >> $VTLOG
+    echo "ptoptions=+rdinit" >> /linuxrc.config
+fi
+
+
 if $BUSYBOX_PATH/ls $VTOY_PATH | $GREP -q 'ventoy_dud[0-9]'; then
     if [ -f /linuxrc.config ]; then
         vtKerVer=$($BUSYBOX_PATH/uname -r)
@@ -60,7 +66,7 @@ fi
 if [ -e /etc/initrd.functions ] && $GREP -q 'HPIP' /etc/initrd.functions; then
     echo "HPIP" >> $VTLOG    
     $BUSYBOX_PATH/mkdir /dev
-    $BUSYBOX_PATH/mknod -m 660 /dev/console b 5 1
+    $BUSYBOX_PATH/mknod -m 660 /dev/console c 5 1
     $SED "/CD_DEVICES=/a $BUSYBOX_PATH/sh $VTOY_PATH/hook/suse/disk_hook.sh" -i /etc/initrd.functions
     $SED "/CD_DEVICES=/a CD_DEVICES=\"/dev/ventoy \$CD_DEVICES\"" -i /etc/initrd.functions
 elif [ -f /scripts/udev_setup ]; then

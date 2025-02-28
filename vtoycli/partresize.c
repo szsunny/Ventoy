@@ -312,6 +312,7 @@ static int secureboot_proc(char *disk, UINT64 part2start)
 			fl_remove("/EFI/BOOT/grubx64.efi");
 			fl_remove("/EFI/BOOT/grubx64_real.efi");
 			fl_remove("/EFI/BOOT/MokManager.efi");
+			fl_remove("/EFI/BOOT/mmx64.efi");
             fl_remove("/ENROLL_THIS_KEY_IN_MOKMANAGER.cer");
 
 			file = fl_fopen("/EFI/BOOT/BOOTX64.EFI", "wb");
@@ -598,7 +599,7 @@ static int update_part_table(char *disk, UINT64 part2start)
 
         PartTbl[1].StartLBA = PartTbl[0].LastLBA + 1;
 		PartTbl[1].LastLBA = PartTbl[1].StartLBA + VENTOY_EFI_PART_SIZE / 512 - 1;
-		PartTbl[1].Attr = 0xC000000000000001ULL;
+		PartTbl[1].Attr = VENTOY_EFI_PART_ATTR;
         PartTbl[1].Name[0] = 'V';
         PartTbl[1].Name[1] = 'T';
         PartTbl[1].Name[2] = 'O';

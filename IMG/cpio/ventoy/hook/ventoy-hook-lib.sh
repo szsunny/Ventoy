@@ -30,6 +30,8 @@ SLEEP=$BUSYBOX_PATH/sleep
 HEAD=$BUSYBOX_PATH/head
 VTOY_DM_PATH=/dev/mapper/ventoy
 VTOY_DEBUG_LEVEL=$($BUSYBOX_PATH/hexdump -n 1 -s 450 -e '1/1 "%02x"' $VTOY_PATH/ventoy_os_param)
+VTOY_LINUX_REMOUNT=$($BUSYBOX_PATH/hexdump -n 1 -s 454 -e '1/1 "%02x"' $VTOY_PATH/ventoy_os_param)
+VTOY_VLNK_BOOT=$($BUSYBOX_PATH/hexdump -n 1 -s 455 -e '1/1 "%02x"' $VTOY_PATH/ventoy_os_param)
 
 if [ "$VTOY_DEBUG_LEVEL" = "01" ]; then
     if [ -e /dev/console ]; then
@@ -64,12 +66,16 @@ set_ventoy_hook_finish() {
     echo 'Y' > $VTOY_PATH/hook_finish
 }
 
-get_ventoy_disk_name() {    
-    line=$($VTOY_PATH/tool/vtoydump -f /ventoy/ventoy_os_param)
-    if [ $? -eq 0 ]; then
-        echo ${line%%#*}
-    else    
-        echo "unknown"
+get_ventoy_disk_name() {
+    if [ "$VTOY_VLNK_BOOT" = "01" ]; then
+        $VTOY_PATH/tool/vtoydump -t /ventoy/ventoy_os_param
+    else
+        line=$($VTOY_PATH/tool/vtoydump -f /ventoy/ventoy_os_param)
+        if [ $? -eq 0 ]; then
+            echo ${line%%#*}
+        else    
+            echo "unknown"
+        fi
     fi
 }
 
@@ -120,14 +126,6 @@ check_usb_disk_ready() {
     [ -e "${vtpart2}" ]
 }
 
-is_ventoy_disk() {
-    if $VTOY_PATH/tool/vtoydump -f $VTOY_PATH/ventoy_os_param -c "$1"; then
-        $BUSYBOX_PATH/true
-    else
-        $BUSYBOX_PATH/false
-    fi
-}
-
 not_ventoy_disk() {
     if echo $1 | $EGREP -q "nvme.*p$|mmc.*p$|nbd.*p$"; then
         vtDiskName=${1:0:-1}
@@ -135,10 +133,15 @@ not_ventoy_disk() {
         vtDiskName=$1
     fi
 
-    if $VTOY_PATH/tool/vtoydump -f $VTOY_PATH/ventoy_os_param -c "$vtDiskName"; then
-        $BUSYBOX_PATH/false
+    if [ "$VTOY_VLNK_BOOT" = "01" ]; then
+        vtVtoyDisk=$($VTOY_PATH/tool/vtoydump -t $VTOY_PATH/ventoy_os_param)
+        [ "$vtVtoyDisk" != "/dev/$vtDiskName" ]
     else
-        $BUSYBOX_PATH/true
+        if $VTOY_PATH/tool/vtoydump -f $VTOY_PATH/ventoy_os_param -c "$vtDiskName"; then
+            $BUSYBOX_PATH/false
+        else
+            $BUSYBOX_PATH/true
+        fi
     fi
 }
 
@@ -206,11 +209,20 @@ ventoy_check_dm_module() {
         vtlog "modprobe failed, now try to insmod ko..."
     
         $FIND /lib/modules/ -name "dm-mod.ko*" | while read vtline; do
-            vtlog "insmode $vtline "
+            vtlog "insmod $vtline "
             $BUSYBOX_PATH/insmod $vtline >>$VTLOG 2>&1
+            if [ $? -eq 0 ]; then
+                vtlog "insmod success"
+            else
+                vtlog "insmod failed, try decompress"
+                if echo $vtline | $GREP -q "\.zst"; then
+                    $VTOY_PATH/tool/zstdcat $vtline > $VTOY_PATH/extract_dm_mod.ko
+                    $BUSYBOX_PATH/insmod $VTOY_PATH/extract_dm_mod.ko >>$VTLOG 2>&1
+                fi
+            fi
         done
     fi
-    
+
     if $GREP -q 'device-mapper' /proc/devices; then
         vtlog "device-mapper found in /proc/devices after retry"
         $BUSYBOX_PATH/true; return
@@ -219,6 +231,7 @@ ventoy_check_dm_module() {
         $BUSYBOX_PATH/false; return
     fi
 }
+
 
 create_ventoy_device_mapper() {
     vtlog "create_ventoy_device_mapper $*"
@@ -230,19 +243,24 @@ create_ventoy_device_mapper() {
     fi
     
     vtlog "dmsetup avaliable in system $VT_DM_BIN"
-        
+
     if ventoy_check_dm_module "$1"; then
         vtlog "device-mapper module check success"
     else
         vterr "Error: no dm module avaliable"
     fi
     
-    $VTOY_PATH/tool/vtoydm -p -f $VTOY_PATH/ventoy_image_map -d $1 > $VTOY_PATH/ventoy_dm_table        
+    $VTOY_PATH/tool/vtoydm -p -f $VTOY_PATH/ventoy_image_map -d $1 > $VTOY_PATH/ventoy_dm_table
+    $VTOY_PATH/tool/vtoydm -r -f $VTOY_PATH/ventoy_image_map -d $1 > $VTOY_PATH/ventoy_raw_table    
+
     if [ -z "$2" ]; then
         $VT_DM_BIN create ventoy $VTOY_PATH/ventoy_dm_table >>$VTLOG 2>&1
     else
         $VT_DM_BIN "$2" create ventoy $VTOY_PATH/ventoy_dm_table >>$VTLOG 2>&1
-    fi    
+    fi
+    
+    RAWDISKNAME=$($HEAD -n1 $VTOY_PATH/ventoy_raw_table | $AWK '{print $4}')
+    $VT_DM_BIN create ${RAWDISKNAME#/dev/}  $VTOY_PATH/ventoy_raw_table >>$VTLOG 2>&1
 }
 
 create_persistent_device_mapper() {
@@ -263,7 +281,7 @@ create_persistent_device_mapper() {
     fi
     
     $VTOY_PATH/tool/vtoydm -p -f $VTOY_PATH/ventoy_persistent_map -d $1 > $VTOY_PATH/persistent_dm_table        
-    $VT_DM_BIN create vtoy_persistent $VTOY_PATH/persistent_dm_table >>$VTLOG 2>&1
+    $VT_DM_BIN create vtoy_persistent $VTOY_PATH/persistent_dm_table >>$VTLOG 2>&1    
 }
 
 
@@ -493,6 +511,22 @@ ventoy_create_persistent_link() {
     fi    
 }
 
+ventoy_partname_to_diskname() {
+    if echo $1 | $EGREP -q "nvme.*p[0-9]$|mmc.*p[0-9]$|nbd.*p[0-9]$"; then
+        echo -n "${1:0:-2}"    
+    else
+        echo -n "${1:0:-1}"
+    fi
+}
+
+ventoy_diskname_to_partname() {
+    if echo $1 | $EGREP -q "nvme.*p[0-9]$|mmc.*p[0-9]$|nbd.*p[0-9]$"; then
+        echo -n "${1}p$2"
+    else
+        echo -n "${1}$2"
+    fi
+}
+
 ventoy_udev_disk_common_hook() {    
     if echo $1 | $EGREP -q "nvme.*p[0-9]$|mmc.*p[0-9]$|nbd.*p[0-9]$"; then
         VTDISK="${1:0:-2}"    
@@ -540,7 +574,7 @@ ventoy_udev_disk_common_hook() {
     if [ -f $VTOY_PATH/ventoy_persistent_map ]; then
         create_persistent_device_mapper "/dev/$VTDISK"
         ventoy_create_persistent_link
-    fi
+    fi    
 }
 
 ventoy_create_dev_ventoy_part() {   
@@ -548,8 +582,7 @@ ventoy_create_dev_ventoy_part() {
     $BUSYBOX_PATH/mknod -m 0666 /dev/ventoy b $blkdev_num
     
     if [ -e /vtoy_dm_table ]; then
-        vtPartid=1
-        
+        vtPartid=1                        
         $CAT /vtoy_dm_table | while read vtline; do
             echo $vtline > /ventoy/dm_table_part${vtPartid}
             $VTOY_PATH/tool/dmsetup create ventoy${vtPartid} /ventoy/dm_table_part${vtPartid}
@@ -558,7 +591,7 @@ ventoy_create_dev_ventoy_part() {
             $BUSYBOX_PATH/mknod -m 0666 /dev/ventoy${vtPartid} b $blkdev_num
             
             vtPartid=$(expr $vtPartid + 1)
-        done        
+        done   
     fi
 }
 
@@ -598,7 +631,12 @@ is_inotify_ventoy_part() {
                 fi
                 
                 if [ -e /dev/$vtShortName ]; then
-                    $VTOY_PATH/tool/vtoydump -f $VTOY_PATH/ventoy_os_param -c $vtShortName
+                    if [ "$VTOY_VLNK_BOOT" = "01" ]; then
+                        vtOrgDiskName=$($VTOY_PATH/tool/vtoydump -t $VTOY_PATH/ventoy_os_param)
+                        [ "$vtOrgDiskName" = "/dev/$vtShortName" ]
+                    else
+                        $VTOY_PATH/tool/vtoydump -f $VTOY_PATH/ventoy_os_param -c $vtShortName
+                    fi
                     return
                 fi
             fi
@@ -649,4 +687,29 @@ ventoy_check_install_module_xz() {
         $BUSYBOX_PATH/xz -d  "${1}.xz"
         $BUSYBOX_PATH/insmod "$1"
     fi
+}
+
+ventoy_check_umount() {
+    for vtLoop in 0 1 2 3 4 5 6 7 8 9; do
+        $BUSYBOX_PATH/umount "$1" > /dev/null 2>&1
+        if $BUSYBOX_PATH/mountpoint -q "$1"; then
+            $SLEEP 1
+        else
+            break
+        fi
+    done
+}
+
+ventoy_wait_dir() {
+    vtdir=$1
+    vtsec=0
+    
+    while [ $vtsec -lt $2 ]; do
+        if [ -d "$vtdir" ]; then
+            break
+        else
+            $SLEEP 1
+            vtsec=$(expr $vtsec + 1)
+        fi
+    done
 }
